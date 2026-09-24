@@ -1,0 +1,11 @@
+PROFESSIONAL UPGRADE
+===================
+- Reworked mobile-first visual system with purple, blue, green, orange and pink accents.
+- Replaced demo/simulation language in the UI with member/admin operational wording, while keeping published plan rates informational rather than guaranteed.
+- Added responsive dashboard, plans, plan detail, payment evidence, pending state, investments, withdrawal, profile, history and notifications views.
+- Added optional transaction ID and optional screenshot; at least one payment evidence item is required.
+- Added Easypaisa, JazzCash and Pakistani bank withdrawal forms.
+- Added MySQL-backed admin dashboard with customers, payments, withdrawals, investments and plans.
+- Added password security note; plaintext passwords are never displayed.
+- Added referral code tracking with configurable REFERRAL_RATE (default 5%).
+- Added user suspension status and payment screenshot storage.
