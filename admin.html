@@ -1,3 +1,767 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Smart Investment — Admin</title><link rel="stylesheet" href="styles.css"></head><body><div class="app-shell"><header class="topbar"><div class="brand-inline"><div class="mini-logo">↗</div><div><b>Smart Investment</b><small>Administration</small></div></div><button class="outline" id="logout" style="display:none" onclick="logout()">Logout</button></header><main><section id="login" class="auth-card" style="margin:35px auto"><h1>Admin access</h1><p class="muted">Use the credentials configured in backend/.env.</p><label>Admin username</label><input id="au" class="field"><label>Admin password</label><input id="ap" class="field" type="password"><button class="btn primary full" onclick="login()">Open admin dashboard</button><p id="err" class="toast hidden"></p></section><section id="panel" class="hidden"><div class="hero"><h1>Operations dashboard</h1><p>Monitor users, payment reviews, withdrawals, plans and investment records.</p></div><div class="section-title">Overview</div><div id="stats" class="grid"></div><div class="section-title">Payment requests</div><div id="payments" class="panel"></div><div class="section-title">Withdrawal requests</div><div id="withdrawals" class="panel"></div><div class="section-title">Customers</div><div id="users" class="panel"></div><div class="section-title">Investment records</div><div id="investments" class="panel"></div><div class="section-title">Plan management</div><div id="plans" class="panel"></div></section></main></div><script>
-const API='/api',money=n=>'PKR '+Number(n||0).toLocaleString('en-PK',{minimumFractionDigits:2,maximumFractionDigits:2}),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));let cred=JSON.parse(sessionStorage.getItem('si_admin')||'null');function h(){return {'Content-Type':'application/json','x-admin-username':cred?.u||'','x-admin-password':cred?.p||''}}async function api(p,o={}){const r=await fetch(API+p,{...o,headers:{...h(),...(o.headers||{})}}),d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||'Request failed');return d}async function login(){cred={u:$('au').value.trim(),p:$('ap').value};sessionStorage.setItem('si_admin',JSON.stringify(cred));try{await api('/admin/stats');show();load()}catch(e){sessionStorage.removeItem('si_admin');cred=null;$('err').textContent=e.message;$('err').classList.remove('hidden')}}function show(){$('login').classList.add('hidden');$('panel').classList.remove('hidden');$('logout').style.display='block'}function logout(){sessionStorage.removeItem('si_admin');location.reload()}const $=id=>document.getElementById(id);async function load(){try{const[s,p,w,u,i,pl]=await Promise.all([api('/admin/stats'),api('/admin/payments'),api('/admin/withdrawals'),api('/admin/users'),api('/admin/investments'),api('/admin/plans')]);$('stats').innerHTML=[['Customers',s.users],['Pending payments',s.pendingPayments],['Pending withdrawals',s.pendingWithdrawals],['Active investments',s.activeInvestments],['Account balances',money(s.totalUserBalance)]].map(x=>`<div class="stat"><small>${x[0]}</small><b>${x[1]}</b></div>`).join('');$('payments').innerHTML=p.length?p.map(x=>`<div class="list-item"><div class="row"><b>${esc(x.username)} · ${esc(x.plan_name)}</b><span class="status ${x.status}">${x.status}</span></div><div class="row"><b>${money(x.amount)}</b><small>TX: ${esc(x.transaction_id||'—')}</small></div>${x.payment_screenshot?`<a target="_blank" href="${x.payment_screenshot}">View payment screenshot</a>`:''}<small class="muted">${esc(x.created_at)}</small>${x.status==='pending'?`<div><button class="btn success" onclick="review('/admin/payments/${x.id}/approve')">Approve</button> <button class="outline" onclick="review('/admin/payments/${x.id}/reject')">Reject</button></div>`:''}</div>`).join(''):'<p class="muted">No payment requests.</p>';$('withdrawals').innerHTML=w.length?w.map(x=>`<div class="list-item"><div class="row"><b>${esc(x.username)}</b><span class="status ${x.status}">${x.status}</span></div><div class="row"><b>${money(x.amount)}</b><small>${esc(x.method)}</small></div><div class="notice">${esc(x.account)}</div><small class="muted">${esc(x.created_at)}</small>${x.status==='pending'?`<div><button class="btn success" onclick="review('/admin/withdrawals/${x.id}/approve')">Approve</button> <button class="outline" onclick="review('/admin/withdrawals/${x.id}/reject')">Reject</button></div>`:''}</div>`).join(''):'<p class="muted">No withdrawals.</p>';$('users').innerHTML=u.length?u.map(x=>`<div class="list-item"><div class="row"><b>${esc(x.username)}</b><b>${money(x.balance)}</b></div><div class="row"><small>Referral: ${esc(x.referral_code)}</small><small>Referral earnings: ${money(x.referral_earnings)}</small></div><small class="muted">Joined ${esc(x.created_at)}</small></div>`).join(''):'<p class="muted">No customers.</p>';$('investments').innerHTML=i.length?i.map(x=>`<div class="list-item"><div class="row"><b>${esc(x.username)} · ${esc(x.plan_name)}</b><span class="status ${x.status}">${x.status}</span></div><div class="row"><b>${money(x.amount)}</b><small>${esc(x.start_at)} → ${esc(x.end_at)}</small></div></div>`).join(''):'<p class="muted">No investment records.</p>';$('plans').innerHTML=pl.map(x=>`<div class="list-item"><div class="row"><b>${esc(x.name)}</b><span>${x.active?'Active':'Inactive'}</span></div><div class="row"><small>${money(x.amount)} · ${x.duration_days} days · ${x.daily_rate}% published rate</small><button class="outline" onclick='editPlan(${x.id},${JSON.stringify(x).replace(/</g,'\\u003c')})'>Edit</button></div></div>`).join('')}catch(e){alert(e.message)}}async function review(url){try{await api(url,{method:'POST'});load()}catch(e){alert(e.message)}}async function editPlan(id,x){const name=prompt('Plan name',x.name);if(name===null)return;const amount=Number(prompt('Amount',x.amount));const rate=Number(prompt('Published rate',x.daily_rate));const days=Number(prompt('Duration days',x.duration_days));const active=confirm('OK = Active, Cancel = Inactive');try{await api('/admin/plans/'+id,{method:'PUT',body:JSON.stringify({name,amount,dailyRate:rate,durationDays:days,active})});load()}catch(e){alert(e.message)}}if(cred)api('/admin/stats').then(()=>{show();load()}).catch(()=>{sessionStorage.removeItem('si_admin');cred=null});
-</script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Smart Investment — Admin</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+
+<div class="app-shell">
+
+<header class="topbar">
+  <div class="brand-inline">
+    <div class="mini-logo">↗</div>
+    <div>
+      <b>Smart Investment</b>
+      <small>Administration</small>
+    </div>
+  </div>
+
+  <button class="outline" id="logout" style="display:none" onclick="logout()">
+    Logout
+  </button>
+</header>
+
+<main>
+
+<section id="login" class="auth-card" style="margin:35px auto">
+
+  <h1>Admin access</h1>
+
+  <p class="muted">
+    Use the credentials configured in backend/.env.
+  </p>
+
+  <label>Admin username</label>
+  <input id="au" class="field" autocomplete="username">
+
+  <label>Admin password</label>
+  <input id="ap" class="field" type="password" autocomplete="current-password">
+
+  <button class="btn primary full" onclick="login()">
+    Open admin dashboard
+  </button>
+
+  <p id="err" class="toast hidden"></p>
+
+</section>
+
+
+<section id="panel" class="hidden">
+
+  <div class="hero">
+    <h1>Operations dashboard</h1>
+    <p>
+      Monitor users, payment reviews, withdrawals, plans and investment records.
+    </p>
+  </div>
+
+
+  <div class="section-title">Overview</div>
+  <div id="stats" class="grid"></div>
+
+
+  <div class="section-title">Payment requests</div>
+  <div id="payments" class="panel"></div>
+
+
+  <div class="section-title">Withdrawal requests</div>
+  <div id="withdrawals" class="panel"></div>
+
+
+  <div class="section-title">Customers</div>
+  <div id="users" class="panel"></div>
+
+
+  <div class="section-title">Investment records</div>
+  <div id="investments" class="panel"></div>
+
+
+  <div class="section-title">Plan management</div>
+  <div id="plans" class="panel"></div>
+
+</section>
+
+</main>
+</div>
+
+
+<script>
+
+/* ================================
+   SMART INVEST ADMIN API
+================================ */
+
+const API = 'http://localhost:4000/api';
+
+
+/* ================================
+   HELPERS
+================================ */
+
+const $ = id => document.getElementById(id);
+
+const money = n =>
+  'PKR ' +
+  Number(n || 0).toLocaleString('en-PK', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+
+const esc = s =>
+  String(s ?? '').replace(/[&<>"']/g, c => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[c]));
+
+
+/* ================================
+   ADMIN SESSION
+================================ */
+
+let cred = JSON.parse(
+  sessionStorage.getItem('si_admin') || 'null'
+);
+
+
+/* ================================
+   ADMIN HEADERS
+================================ */
+
+function h() {
+
+  return {
+    'Content-Type': 'application/json',
+    'x-admin-username': cred?.u || '',
+    'x-admin-password': cred?.p || ''
+  };
+
+}
+
+
+/* ================================
+   API REQUEST
+================================ */
+
+async function api(path, options = {}) {
+
+  const response = await fetch(API + path, {
+    ...options,
+
+    headers: {
+      ...h(),
+      ...(options.headers || {})
+    }
+  });
+
+  const data = await response
+    .json()
+    .catch(() => ({}));
+
+  if (!response.ok) {
+
+    throw new Error(
+      data.error || 'Request failed'
+    );
+
+  }
+
+  return data;
+}
+
+
+/* ================================
+   ADMIN LOGIN
+================================ */
+
+async function login() {
+
+  const username = $('au').value.trim();
+  const password = $('ap').value;
+
+  if (!username || !password) {
+
+    $('err').textContent =
+      'Username and password are required.';
+
+    $('err').classList.remove('hidden');
+
+    return;
+  }
+
+  cred = {
+    u: username,
+    p: password
+  };
+
+  sessionStorage.setItem(
+    'si_admin',
+    JSON.stringify(cred)
+  );
+
+  try {
+
+    await api('/admin/stats');
+
+    show();
+
+    load();
+
+  } catch (e) {
+
+    sessionStorage.removeItem('si_admin');
+
+    cred = null;
+
+    $('err').textContent =
+      e.message || 'Admin login failed.';
+
+    $('err').classList.remove('hidden');
+
+  }
+
+}
+
+
+/* ================================
+   SHOW DASHBOARD
+================================ */
+
+function show() {
+
+  $('login').classList.add('hidden');
+
+  $('panel').classList.remove('hidden');
+
+  $('logout').style.display = 'block';
+
+}
+
+
+/* ================================
+   LOGOUT
+================================ */
+
+function logout() {
+
+  sessionStorage.removeItem('si_admin');
+
+  location.reload();
+
+}
+
+
+/* ================================
+   LOAD ADMIN DATA
+================================ */
+
+async function load() {
+
+  try {
+
+    const [
+      stats,
+      payments,
+      withdrawals,
+      users,
+      investments,
+      plans
+    ] = await Promise.all([
+
+      api('/admin/stats'),
+
+      api('/admin/payments'),
+
+      api('/admin/withdrawals'),
+
+      api('/admin/users'),
+
+      api('/admin/investments'),
+
+      api('/admin/plans')
+
+    ]);
+
+
+    /* ================================
+       STATS
+    ================================= */
+
+    $('stats').innerHTML = [
+
+      ['Customers', stats.users],
+
+      ['Pending payments', stats.pendingPayments],
+
+      ['Pending withdrawals', stats.pendingWithdrawals],
+
+      ['Active investments', stats.activeInvestments],
+
+      ['Account balances', money(stats.totalUserBalance)]
+
+    ].map(x => `
+
+      <div class="stat">
+
+        <small>${x[0]}</small>
+
+        <b>${x[1]}</b>
+
+      </div>
+
+    `).join('');
+
+
+    /* ================================
+       PAYMENTS
+    ================================= */
+
+    $('payments').innerHTML = payments.length
+
+      ? payments.map(x => `
+
+        <div class="list-item">
+
+          <div class="row">
+
+            <b>
+              ${esc(x.username)}
+              ·
+              ${esc(x.plan_name)}
+            </b>
+
+            <span class="status ${x.status}">
+              ${x.status}
+            </span>
+
+          </div>
+
+
+          <div class="row">
+
+            <b>${money(x.amount)}</b>
+
+            <small>
+              TX: ${esc(x.transaction_id || '—')}
+            </small>
+
+          </div>
+
+
+          ${
+            x.payment_screenshot
+              ? `
+                <a
+                  target="_blank"
+                  href="${x.payment_screenshot}"
+                >
+                  View payment screenshot
+                </a>
+              `
+              : ''
+          }
+
+
+          <small class="muted">
+            ${esc(x.created_at)}
+          </small>
+
+
+          ${
+            x.status === 'pending'
+              ? `
+
+                <div>
+
+                  <button
+                    class="btn success"
+                    onclick="review('/admin/payments/${x.id}/approve')"
+                  >
+                    Approve
+                  </button>
+
+                  <button
+                    class="outline"
+                    onclick="review('/admin/payments/${x.id}/reject')"
+                  >
+                    Reject
+                  </button>
+
+                </div>
+
+              `
+              : ''
+          }
+
+        </div>
+
+      `).join('')
+
+      : '<p class="muted">No payment requests.</p>';
+
+
+    /* ================================
+       WITHDRAWALS
+    ================================= */
+
+    $('withdrawals').innerHTML = withdrawals.length
+
+      ? withdrawals.map(x => `
+
+        <div class="list-item">
+
+          <div class="row">
+
+            <b>${esc(x.username)}</b>
+
+            <span class="status ${x.status}">
+              ${x.status}
+            </span>
+
+          </div>
+
+
+          <div class="row">
+
+            <b>${money(x.amount)}</b>
+
+            <small>${esc(x.method)}</small>
+
+          </div>
+
+
+          <div class="notice">
+            ${esc(x.account)}
+          </div>
+
+
+          <small class="muted">
+            ${esc(x.created_at)}
+          </small>
+
+
+          ${
+            x.status === 'pending'
+              ? `
+
+                <div>
+
+                  <button
+                    class="btn success"
+                    onclick="review('/admin/withdrawals/${x.id}/approve')"
+                  >
+                    Approve
+                  </button>
+
+                  <button
+                    class="outline"
+                    onclick="review('/admin/withdrawals/${x.id}/reject')"
+                  >
+                    Reject
+                  </button>
+
+                </div>
+
+              `
+              : ''
+          }
+
+        </div>
+
+      `).join('')
+
+      : '<p class="muted">No withdrawals.</p>';
+
+
+    /* ================================
+       USERS
+    ================================= */
+
+    $('users').innerHTML = users.length
+
+      ? users.map(x => `
+
+        <div class="list-item">
+
+          <div class="row">
+
+            <b>${esc(x.username)}</b>
+
+            <b>${money(x.balance)}</b>
+
+          </div>
+
+
+          <div class="row">
+
+            <small>
+              Referral:
+              ${esc(x.referral_code)}
+            </small>
+
+            <small>
+              Referral earnings:
+              ${money(x.referral_earnings)}
+            </small>
+
+          </div>
+
+
+          <small class="muted">
+            Joined ${esc(x.created_at)}
+          </small>
+
+        </div>
+
+      `).join('')
+
+      : '<p class="muted">No customers.</p>';
+
+
+    /* ================================
+       INVESTMENTS
+    ================================= */
+
+    $('investments').innerHTML = investments.length
+
+      ? investments.map(x => `
+
+        <div class="list-item">
+
+          <div class="row">
+
+            <b>
+              ${esc(x.username)}
+              ·
+              ${esc(x.plan_name)}
+            </b>
+
+            <span class="status ${x.status}">
+              ${x.status}
+            </span>
+
+          </div>
+
+
+          <div class="row">
+
+            <b>${money(x.amount)}</b>
+
+            <small>
+              ${esc(x.start_at)}
+              →
+              ${esc(x.end_at)}
+            </small>
+
+          </div>
+
+        </div>
+
+      `).join('')
+
+      : '<p class="muted">No investment records.</p>';
+
+
+    /* ================================
+       PLANS
+    ================================= */
+
+    $('plans').innerHTML = plans.map(x => `
+
+      <div class="list-item">
+
+        <div class="row">
+
+          <b>${esc(x.name)}</b>
+
+          <span>
+            ${x.active ? 'Active' : 'Inactive'}
+          </span>
+
+        </div>
+
+
+        <div class="row">
+
+          <small>
+
+            ${money(x.amount)}
+            ·
+            ${x.duration_days} days
+            ·
+            ${x.daily_rate}% published rate
+
+          </small>
+
+
+          <button
+            class="outline"
+            onclick='editPlan(
+              ${x.id},
+              ${JSON.stringify(x).replace(/</g, '\\u003c')}
+            )'
+          >
+            Edit
+          </button>
+
+        </div>
+
+      </div>
+
+    `).join('');
+
+
+  } catch (e) {
+
+    alert(
+      e.message || 'Unable to load admin data.'
+    );
+
+  }
+
+}
+
+
+/* ================================
+   APPROVE / REJECT
+================================ */
+
+async function review(url) {
+
+  try {
+
+    await api(url, {
+      method: 'POST'
+    });
+
+    load();
+
+  } catch (e) {
+
+    alert(
+      e.message || 'Request failed.'
+    );
+
+  }
+
+}
+
+
+/* ================================
+   EDIT PLAN
+================================ */
+
+async function editPlan(id, x) {
+
+  const name = prompt(
+    'Plan name',
+    x.name
+  );
+
+  if (name === null) return;
+
+
+  const amount = Number(
+    prompt(
+      'Amount',
+      x.amount
+    )
+  );
+
+
+  const rate = Number(
+    prompt(
+      'Published rate',
+      x.daily_rate
+    )
+  );
+
+
+  const days = Number(
+    prompt(
+      'Duration days',
+      x.duration_days
+    )
+  );
+
+
+  const active = confirm(
+    'OK = Active, Cancel = Inactive'
+  );
+
+
+  try {
+
+    await api(
+      '/admin/plans/' + id,
+      {
+        method: 'PUT',
+
+        body: JSON.stringify({
+
+          name,
+
+          amount,
+
+          dailyRate: rate,
+
+          durationDays: days,
+
+          active
+
+        })
+
+      }
+    );
+
+    load();
+
+  } catch (e) {
+
+    alert(
+      e.message || 'Plan update failed.'
+    );
+
+  }
+
+}
+
+
+/* ================================
+   AUTO LOGIN FROM SESSION
+================================ */
+
+if (cred) {
+
+  api('/admin/stats')
+
+    .then(() => {
+
+      show();
+
+      load();
+
+    })
+
+    .catch(() => {
+
+      sessionStorage.removeItem(
+        'si_admin'
+      );
+
+      cred = null;
+
+    });
+
+}
+
+</script>
+
+</body>
+</html>
