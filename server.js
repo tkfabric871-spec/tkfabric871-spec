@@ -12,43 +12,15 @@ const path = require('path');
 const app = express();
 const PORT = Number(process.env.PORT || 4000);
 
-/* =========================================================
-   BASIC SETTINGS
-========================================================= */
-
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 
-/* =========================================================
-   FRONTEND
-   server.js is inside:
-   smart_work/backend/server.js
+// Serve frontend files from the parent smart_work folder
+app.use(express.static(path.join(__dirname, '..')));
 
-   index.html is inside:
-   smart_work/index.html
-========================================================= */
-
-const frontendDir = path.join(__dirname, '..');
-
-app.use(express.static(frontendDir));
-
-app.get('/', (req, res) => {
-  res.sendFile(path.join(frontendDir, 'index.html'));
-});
-
-app.get('/index.html', (req, res) => {
-  res.sendFile(path.join(frontendDir, 'index.html'));
-});
-
-/* =========================================================
-   UPLOADS
-========================================================= */
-
-const uploadDir = path.join(frontendDir, 'uploads');
-
-fs.mkdirSync(uploadDir, {
-  recursive: true
-});
+// Upload directory
+const uploadDir = path.join(__dirname, '..', 'uploads');
+fs.mkdirSync(uploadDir, { recursive: true });
 
 const upload = multer({
   dest: uploadDir,
@@ -62,10 +34,7 @@ const upload = multer({
 
 app.use('/uploads', express.static(uploadDir));
 
-/* =========================================================
-   MYSQL
-========================================================= */
-
+// MySQL
 const pool = mysql.createPool({
   host: process.env.DB_HOST || 'localhost',
   port: Number(process.env.DB_PORT || 3306),
@@ -77,39 +46,24 @@ const pool = mysql.createPool({
   decimalNumbers: true
 });
 
-/* =========================================================
-   SETTINGS
-========================================================= */
+const JWT_SECRET = process.env.JWT_SECRET || 'CHANGE_ME';
+const REFERRAL_RATE = Number(process.env.REFERRAL_RATE || 0.05);
 
-const JWT_SECRET =
-  process.env.JWT_SECRET || 'CHANGE_ME';
-
-const REFERRAL_RATE =
-  Number(process.env.REFERRAL_RATE || 0.05);
-
-/* =========================================================
-   REFERRAL CODE
-========================================================= */
-
-function makeReferralCode(username) {
-  return (
-    String(username)
-      .replace(/[^a-z0-9]/gi, '')
-      .slice(0, 6)
-      .toUpperCase() +
-    Math.floor(1000 + Math.random() * 9000)
-  );
+// Referral code
+function code(u) {
+  return String(u)
+    .replace(/[^a-z0-9]/gi, '')
+    .slice(0, 6)
+    .toUpperCase() +
+    Math.floor(1000 + Math.random() * 9000);
 }
 
-/* =========================================================
-   JWT
-========================================================= */
-
-function sign(user) {
+// JWT
+function sign(u) {
   return jwt.sign(
     {
-      id: user.id,
-      username: user.username
+      id: u.id,
+      username: u.username
     },
     JWT_SECRET,
     {
@@ -118,26 +72,18 @@ function sign(user) {
   );
 }
 
-/* =========================================================
-   USER AUTH
-========================================================= */
-
+// User authentication
 function auth(req, res, next) {
-  const token = (req.headers.authorization || '')
-    .replace(/^Bearer /, '');
+  const t = (req.headers.authorization || '').replace(/^Bearer /, '');
 
-  if (!token) {
+  if (!t) {
     return res.status(401).json({
       error: 'Authentication required.'
     });
   }
 
   try {
-    req.user = jwt.verify(
-      token,
-      JWT_SECRET
-    );
-
+    req.user = jwt.verify(t, JWT_SECRET);
     next();
   } catch {
     return res.status(401).json({
@@ -146,16 +92,11 @@ function auth(req, res, next) {
   }
 }
 
-/* =========================================================
-   ADMIN AUTH
-========================================================= */
-
+// Admin authentication
 function adminAuth(req, res, next) {
   if (
-    req.headers['x-admin-username'] !==
-      process.env.ADMIN_USERNAME ||
-    req.headers['x-admin-password'] !==
-      process.env.ADMIN_PASSWORD
+    req.headers['x-admin-username'] !== process.env.ADMIN_USERNAME ||
+    req.headers['x-admin-password'] !== process.env.ADMIN_PASSWORD
   ) {
     return res.status(401).json({
       error: 'Admin authentication required.'
@@ -165,10 +106,7 @@ function adminAuth(req, res, next) {
   next();
 }
 
-/* =========================================================
-   DATABASE MIGRATION
-========================================================= */
-
+// Database migration
 async function migrate() {
   try {
     await pool.query(
@@ -176,31 +114,22 @@ async function migrate() {
     );
   } catch (e) {
     if (e.code !== 'ER_DUP_FIELDNAME') {
-      console.warn(
-        'users migration:',
-        e.message
-      );
+      console.warn('users migration:', e.message);
     }
   }
 
   try {
     await pool.query(
-      'ALTER TABLE payment_requests ADD COLUMN payment_screenshot VARCHAR(255) NULL'
+      "ALTER TABLE payment_requests ADD COLUMN payment_screenshot VARCHAR(255) NULL"
     );
   } catch (e) {
     if (e.code !== 'ER_DUP_FIELDNAME') {
-      console.warn(
-        'payment screenshot migration:',
-        e.message
-      );
+      console.warn('payment screenshot migration:', e.message);
     }
   }
 }
 
-/* =========================================================
-   HEALTH CHECK
-========================================================= */
-
+// Health check
 app.get('/api/health', async (req, res) => {
   try {
     await pool.query('SELECT 1');
@@ -218,427 +147,294 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
-/* =========================================================
-   SIGNUP
-========================================================= */
+// Signup
+app.post('/api/auth/signup', async (req, res) => {
+  try {
+    const username = String(req.body.username || '').trim();
+    const password = String(req.body.password || '');
+    const ref = String(req.body.referralCode || '')
+      .trim()
+      .toUpperCase();
 
-app.post(
-  '/api/auth/signup',
-  async (req, res) => {
-    try {
-      const username = String(
-        req.body.username || ''
-      ).trim();
+    if (username.length < 3 || username.length > 50) {
+      return res.status(400).json({
+        error: 'Username must be 3-50 characters.'
+      });
+    }
 
-      const password = String(
-        req.body.password || ''
+    if (password.length < 6) {
+      return res.status(400).json({
+        error: 'Password must be at least 6 characters.'
+      });
+    }
+
+    const [e] = await pool.query(
+      'SELECT id FROM users WHERE LOWER(username)=LOWER(?)',
+      [username]
+    );
+
+    if (e.length) {
+      return res.status(409).json({
+        error: 'Username already exists.'
+      });
+    }
+
+    let referrer = null;
+
+    if (ref) {
+      const [r] = await pool.query(
+        'SELECT id,username FROM users WHERE referral_code=? AND status="active"',
+        [ref]
       );
 
-      const referralCode = String(
-        req.body.referralCode || ''
-      )
-        .trim()
-        .toUpperCase();
-
-      if (
-        username.length < 3 ||
-        username.length > 50
-      ) {
+      if (!r.length) {
         return res.status(400).json({
-          error:
-            'Username must be 3-50 characters.'
+          error: 'Invalid referral code.'
         });
       }
 
-      if (password.length < 6) {
-        return res.status(400).json({
-          error:
-            'Password must be at least 6 characters.'
-        });
-      }
-
-      const [existing] =
-        await pool.query(
-          'SELECT id FROM users WHERE LOWER(username)=LOWER(?)',
-          [username]
-        );
-
-      if (existing.length) {
-        return res.status(409).json({
-          error:
-            'Username already exists.'
-        });
-      }
-
-      let referrer = null;
-
-      if (referralCode) {
-        const [r] =
-          await pool.query(
-            'SELECT id, username FROM users WHERE referral_code=? AND status="active"',
-            [referralCode]
-          );
-
-        if (!r.length) {
-          return res.status(400).json({
-            error:
-              'Invalid referral code.'
-          });
-        }
-
-        referrer = r[0];
-      }
-
-      let code = null;
-
-      for (let i = 0; i < 20; i++) {
-        const candidate =
-          makeReferralCode(username);
-
-        const [c] =
-          await pool.query(
-            'SELECT id FROM users WHERE referral_code=?',
-            [candidate]
-          );
-
-        if (!c.length) {
-          code = candidate;
-          break;
-        }
-      }
-
-      if (!code) {
-        throw new Error(
-          'Could not create referral code.'
-        );
-      }
-
-      const hash =
-        await bcrypt.hash(
-          password,
-          12
-        );
-
-      const [result] =
-        await pool.query(
-          'INSERT INTO users(username,password_hash,referral_code,referred_by_user_id) VALUES(?,?,?,?)',
-          [
-            username,
-            hash,
-            code,
-            referrer
-              ? referrer.id
-              : null
-          ]
-        );
-
-      const [rows] =
-        await pool.query(
-          'SELECT id,username,referral_code,balance,referral_earnings,created_at,status FROM users WHERE id=?',
-          [result.insertId]
-        );
-
-      res.status(201).json({
-        token: sign(rows[0]),
-        user: rows[0]
-      });
-    } catch (e) {
-      res.status(500).json({
-        error: e.message
-      });
+      referrer = r[0];
     }
-  }
-);
 
-/* =========================================================
-   LOGIN
-========================================================= */
+    let referralCode;
 
-app.post(
-  '/api/auth/login',
-  async (req, res) => {
-    try {
-      const username = String(
-        req.body.username || ''
-      ).trim();
+    for (let i = 0; i < 20; i++) {
+      const c = code(username);
 
-      const password = String(
-        req.body.password || ''
+      const [cx] = await pool.query(
+        'SELECT id FROM users WHERE referral_code=?',
+        [c]
       );
 
-      const [rows] =
-        await pool.query(
-          'SELECT * FROM users WHERE username=?',
-          [username]
-        );
-
-      if (
-        !rows.length ||
-        !(await bcrypt.compare(
-          password,
-          rows[0].password_hash
-        ))
-      ) {
-        return res.status(401).json({
-          error:
-            'Invalid username or password.'
-        });
+      if (!cx.length) {
+        referralCode = c;
+        break;
       }
+    }
 
-      if (
-        rows[0].status ===
-        'suspended'
-      ) {
-        return res.status(403).json({
-          error:
-            'This account is suspended.'
-        });
-      }
+    if (!referralCode) {
+      throw Error('Could not create referral code.');
+    }
 
-      const u = rows[0];
+    const hash = await bcrypt.hash(password, 12);
 
-      res.json({
-        token: sign(u),
+    const [r] = await pool.query(
+      'INSERT INTO users(username,password_hash,referral_code,referred_by_user_id) VALUES(?,?,?,?)',
+      [
+        username,
+        hash,
+        referralCode,
+        referrer?.id || null
+      ]
+    );
 
-        user: {
-          id: u.id,
-          username: u.username,
-          referral_code:
-            u.referral_code,
-          balance: u.balance,
-          referral_earnings:
-            u.referral_earnings,
-          created_at:
-            u.created_at
-        }
-      });
-    } catch (e) {
-      res.status(500).json({
-        error: e.message
+    const [u] = await pool.query(
+      'SELECT id,username,referral_code,balance,referral_earnings,created_at,status FROM users WHERE id=?',
+      [r.insertId]
+    );
+
+    res.status(201).json({
+      token: sign(u[0]),
+      user: u[0]
+    });
+  } catch (e) {
+    res.status(500).json({
+      error: e.message
+    });
+  }
+});
+
+// Login
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const username = String(req.body.username || '').trim();
+    const password = String(req.body.password || '');
+
+    const [r] = await pool.query(
+      'SELECT * FROM users WHERE username=?',
+      [username]
+    );
+
+    if (
+      !r.length ||
+      !(await bcrypt.compare(password, r[0].password_hash))
+    ) {
+      return res.status(401).json({
+        error: 'Invalid username or password.'
       });
     }
-  }
-);
 
-/* =========================================================
-   CHANGE PASSWORD
-========================================================= */
-
-app.post(
-  '/api/auth/change-password',
-  auth,
-  async (req, res) => {
-    try {
-      const currentPassword =
-        String(
-          req.body.currentPassword ||
-            ''
-        );
-
-      const newPassword =
-        String(
-          req.body.newPassword || ''
-        );
-
-      if (newPassword.length < 6) {
-        return res.status(400).json({
-          error:
-            'New password must be at least 6 characters.'
-        });
-      }
-
-      const [rows] =
-        await pool.query(
-          'SELECT password_hash FROM users WHERE id=?',
-          [req.user.id]
-        );
-
-      if (
-        !rows.length ||
-        !(await bcrypt.compare(
-          currentPassword,
-          rows[0].password_hash
-        ))
-      ) {
-        return res.status(401).json({
-          error:
-            'Current password is incorrect.'
-        });
-      }
-
-      const hash =
-        await bcrypt.hash(
-          newPassword,
-          12
-        );
-
-      await pool.query(
-        'UPDATE users SET password_hash=? WHERE id=?',
-        [
-          hash,
-          req.user.id
-        ]
-      );
-
-      res.json({
-        message:
-          'Password changed successfully.'
-      });
-    } catch (e) {
-      res.status(500).json({
-        error: e.message
+    if (r[0].status === 'suspended') {
+      return res.status(403).json({
+        error: 'This account is suspended.'
       });
     }
-  }
-);
 
-/* =========================================================
-   PLANS
-========================================================= */
+    const u = r[0];
 
-app.get(
-  '/api/plans',
-  async (req, res) => {
-    try {
-      const [rows] =
-        await pool.query(
-          'SELECT id,name,amount,daily_rate,duration_days FROM plans WHERE active=1 ORDER BY id'
-        );
-
-      res.json(rows);
-    } catch (e) {
-      res.status(500).json({
-        error: e.message
-      });
-    }
-  }
-);
-
-/* =========================================================
-   PROFILE
-========================================================= */
-
-app.get(
-  '/api/profile',
-  auth,
-  async (req, res) => {
-    try {
-      const [rows] =
-        await pool.query(
-          'SELECT id,username,referral_code,referred_by_user_id,balance,referral_earnings,created_at,status FROM users WHERE id=?',
-          [req.user.id]
-        );
-
-      if (!rows.length) {
-        return res.status(404).json({
-          error:
-            'User not found.'
-        });
+    res.json({
+      token: sign(u),
+      user: {
+        id: u.id,
+        username: u.username,
+        referral_code: u.referral_code,
+        balance: u.balance,
+        referral_earnings: u.referral_earnings,
+        created_at: u.created_at
       }
+    });
+  } catch (e) {
+    res.status(500).json({
+      error: e.message
+    });
+  }
+});
 
-      const [ref] =
-        await pool.query(
-          'SELECT username FROM users WHERE id=?',
-          [rows[0].referred_by_user_id]
-        );
+// Change password
+app.post('/api/auth/change-password', auth, async (req, res) => {
+  try {
+    const cur = String(req.body.currentPassword || '');
+    const next = String(req.body.newPassword || '');
 
-      res.json({
-        ...rows[0],
-        referred_by:
-          ref[0]?.username ||
-          null
-      });
-    } catch (e) {
-      res.status(500).json({
-        error: e.message
+    if (next.length < 6) {
+      return res.status(400).json({
+        error: 'New password must be at least 6 characters.'
       });
     }
+
+    const [r] = await pool.query(
+      'SELECT password_hash FROM users WHERE id=?',
+      [req.user.id]
+    );
+
+    if (
+      !r.length ||
+      !(await bcrypt.compare(cur, r[0].password_hash))
+    ) {
+      return res.status(401).json({
+        error: 'Current password is incorrect.'
+      });
+    }
+
+    const h = await bcrypt.hash(next, 12);
+
+    await pool.query(
+      'UPDATE users SET password_hash=? WHERE id=?',
+      [h, req.user.id]
+    );
+
+    res.json({
+      message: 'Password changed successfully.'
+    });
+  } catch (e) {
+    res.status(500).json({
+      error: e.message
+    });
   }
-);
+});
 
-/* =========================================================
-   PAYMENT REQUEST
-========================================================= */
+// Plans
+app.get('/api/plans', async (req, res) => {
+  try {
+    const [r] = await pool.query(
+      'SELECT id,name,amount,daily_rate,duration_days FROM plans WHERE active=1 ORDER BY id'
+    );
 
+    res.json(r);
+  } catch (e) {
+    res.status(500).json({
+      error: e.message
+    });
+  }
+});
+
+// Profile
+app.get('/api/profile', auth, async (req, res) => {
+  try {
+    const [r] = await pool.query(
+      'SELECT id,username,referral_code,referred_by_user_id,balance,referral_earnings,created_at,status FROM users WHERE id=?',
+      [req.user.id]
+    );
+
+    if (!r.length) {
+      return res.status(404).json({
+        error: 'User not found.'
+      });
+    }
+
+    const [ref] = await pool.query(
+      'SELECT username FROM users WHERE id=?',
+      [r[0].referred_by_user_id]
+    );
+
+    res.json({
+      ...r[0],
+      referred_by: ref[0]?.username || null
+    });
+  } catch (e) {
+    res.status(500).json({
+      error: e.message
+    });
+  }
+});
+
+// Payment request
 app.post(
   '/api/payments',
   auth,
-  upload.single(
-    'paymentScreenshot'
-  ),
+  upload.single('paymentScreenshot'),
   async (req, res) => {
     try {
-      const planId = Number(
-        req.body.planId
+      const planId = Number(req.body.planId);
+      const tx = String(req.body.transactionId || '').trim();
+
+      const [p] = await pool.query(
+        'SELECT * FROM plans WHERE id=? AND active=1',
+        [planId]
       );
 
-      const transactionId =
-        String(
-          req.body.transactionId ||
-            ''
-        ).trim();
+      if (!p.length) {
+        return res.status(400).json({
+          error: 'Invalid plan.'
+        });
+      }
 
-      const [plans] =
-        await pool.query(
-          'SELECT * FROM plans WHERE id=? AND active=1',
-          [planId]
+      if (!tx && !req.file) {
+        return res.status(400).json({
+          error: 'Transaction ID or payment screenshot is required.'
+        });
+      }
+
+      if (tx) {
+        const [e] = await pool.query(
+          'SELECT id FROM payment_requests WHERE transaction_id=?',
+          [tx]
         );
 
-      if (!plans.length) {
-        return res.status(400).json({
-          error:
-            'Invalid plan.'
-        });
-      }
-
-      if (
-        !transactionId &&
-        !req.file
-      ) {
-        return res.status(400).json({
-          error:
-            'Transaction ID or payment screenshot is required.'
-        });
-      }
-
-      if (transactionId) {
-        const [existing] =
-          await pool.query(
-            'SELECT id FROM payment_requests WHERE transaction_id=?',
-            [transactionId]
-          );
-
-        if (existing.length) {
+        if (e.length) {
           return res.status(409).json({
-            error:
-              'Transaction ID already exists.'
+            error: 'Transaction ID already exists.'
           });
         }
       }
 
-      const screenshot =
-        req.file
-          ? '/uploads/' +
-            path.basename(
-              req.file.path
-            )
-          : null;
+      const shot = req.file
+        ? '/uploads/' + path.basename(req.file.path)
+        : null;
 
       await pool.query(
         'INSERT INTO payment_requests(user_id,plan_id,amount,transaction_id,payment_screenshot) VALUES(?,?,?,?,?)',
         [
           req.user.id,
           planId,
-          plans[0].amount,
-          transactionId ||
-            null,
-          screenshot
+          p[0].amount,
+          tx || null,
+          shot
         ]
       );
 
       res.status(201).json({
-        message:
-          'Payment request submitted for admin review.'
+        message: 'Payment request submitted for admin review.'
       });
     } catch (e) {
       res.status(500).json({
@@ -648,379 +444,259 @@ app.post(
   }
 );
 
-/* =========================================================
-   USER PAYMENTS
-========================================================= */
+// Payment history
+app.get('/api/payments', auth, async (req, res) => {
+  try {
+    const [r] = await pool.query(
+      'SELECT id,plan_id,amount,transaction_id,payment_screenshot,status,created_at,reviewed_at FROM payment_requests WHERE user_id=? ORDER BY id DESC',
+      [req.user.id]
+    );
 
-app.get(
-  '/api/payments',
-  auth,
-  async (req, res) => {
-    try {
-      const [rows] =
-        await pool.query(
-          'SELECT id,plan_id,amount,transaction_id,payment_screenshot,status,created_at,reviewed_at FROM payment_requests WHERE user_id=? ORDER BY id DESC',
-          [req.user.id]
-        );
+    res.json(r);
+  } catch (e) {
+    res.status(500).json({
+      error: e.message
+    });
+  }
+});
 
-      res.json(rows);
-    } catch (e) {
-      res.status(500).json({
-        error: e.message
+// Investments
+app.get('/api/investments', auth, async (req, res) => {
+  try {
+    const [r] = await pool.query(
+      'SELECT i.*,p.name AS plan_name FROM investments i JOIN plans p ON p.id=i.plan_id WHERE i.user_id=? ORDER BY i.id DESC',
+      [req.user.id]
+    );
+
+    res.json(r);
+  } catch (e) {
+    res.status(500).json({
+      error: e.message
+    });
+  }
+});
+
+// Withdrawals
+app.post('/api/withdrawals', auth, async (req, res) => {
+  try {
+    const amount = Number(req.body.amount);
+    const method = String(req.body.method || '').trim();
+    const account = String(req.body.account || '').trim();
+
+    if (!(amount > 0) || !method || !account) {
+      return res.status(400).json({
+        error: 'Valid amount, method and account are required.'
       });
     }
-  }
-);
 
-/* =========================================================
-   INVESTMENTS
-========================================================= */
+    const [u] = await pool.query(
+      'SELECT balance,status FROM users WHERE id=?',
+      [req.user.id]
+    );
 
-app.get(
-  '/api/investments',
-  auth,
-  async (req, res) => {
-    try {
-      const [rows] =
-        await pool.query(
-          'SELECT i.*,p.name AS plan_name FROM investments i JOIN plans p ON p.id=i.plan_id WHERE i.user_id=? ORDER BY i.id DESC',
-          [req.user.id]
-        );
-
-      res.json(rows);
-    } catch (e) {
-      res.status(500).json({
-        error: e.message
+    if (!u.length || u[0].status !== 'active') {
+      return res.status(403).json({
+        error: 'Account is not active.'
       });
     }
-  }
-);
 
-/* =========================================================
-   WITHDRAWAL REQUEST
-========================================================= */
+    const [w] = await pool.query(
+      'SELECT COALESCE(SUM(amount),0) pending FROM withdrawals WHERE user_id=? AND status="pending"',
+      [req.user.id]
+    );
 
-app.post(
-  '/api/withdrawals',
-  auth,
-  async (req, res) => {
-    try {
-      const amount = Number(
-        req.body.amount
-      );
+    const available =
+      Number(u[0].balance) - Number(w[0].pending);
 
-      const method = String(
-        req.body.method || ''
-      ).trim();
-
-      const account = String(
-        req.body.account || ''
-      ).trim();
-
-      if (
-        !(amount > 0) ||
-        !method ||
-        !account
-      ) {
-        return res.status(400).json({
-          error:
-            'Valid amount, method and account are required.'
-        });
-      }
-
-      const [users] =
-        await pool.query(
-          'SELECT balance,status FROM users WHERE id=?',
-          [req.user.id]
-        );
-
-      if (
-        !users.length ||
-        users[0].status !==
-          'active'
-      ) {
-        return res.status(403).json({
-          error:
-            'Account is not active.'
-        });
-      }
-
-      const [pending] =
-        await pool.query(
-          'SELECT COALESCE(SUM(amount),0) pending FROM withdrawals WHERE user_id=? AND status="pending"',
-          [req.user.id]
-        );
-
-      const available =
-        Number(users[0].balance) -
-        Number(
-          pending[0].pending
-        );
-
-      if (amount > available) {
-        return res.status(400).json({
-          error:
-            'Insufficient available balance.'
-        });
-      }
-
-      await pool.query(
-        'INSERT INTO withdrawals(user_id,amount,method,account) VALUES(?,?,?,?)',
-        [
-          req.user.id,
-          amount,
-          method,
-          account
-        ]
-      );
-
-      res.status(201).json({
-        message:
-          'Withdrawal request submitted.',
-        availableBalance:
-          available - amount
-      });
-    } catch (e) {
-      res.status(500).json({
-        error: e.message
+    if (amount > available) {
+      return res.status(400).json({
+        error: 'Insufficient available balance.'
       });
     }
+
+    await pool.query(
+      'INSERT INTO withdrawals(user_id,amount,method,account) VALUES(?,?,?,?)',
+      [
+        req.user.id,
+        amount,
+        method,
+        account
+      ]
+    );
+
+    res.status(201).json({
+      message: 'Withdrawal request submitted.',
+      availableBalance: available - amount
+    });
+  } catch (e) {
+    res.status(500).json({
+      error: e.message
+    });
   }
-);
+});
 
-/* =========================================================
-   USER WITHDRAWALS
-========================================================= */
+// Withdrawal history
+app.get('/api/withdrawals', auth, async (req, res) => {
+  try {
+    const [r] = await pool.query(
+      'SELECT id,amount,method,account,status,created_at,reviewed_at FROM withdrawals WHERE user_id=? ORDER BY id DESC',
+      [req.user.id]
+    );
 
-app.get(
-  '/api/withdrawals',
-  auth,
-  async (req, res) => {
-    try {
-      const [rows] =
-        await pool.query(
-          'SELECT id,amount,method,account,status,created_at,reviewed_at FROM withdrawals WHERE user_id=? ORDER BY id DESC',
-          [req.user.id]
-        );
-
-      res.json(rows);
-    } catch (e) {
-      res.status(500).json({
-        error: e.message
-      });
-    }
+    res.json(r);
+  } catch (e) {
+    res.status(500).json({
+      error: e.message
+    });
   }
-);
+});
 
-/* =========================================================
-   ADMIN STATS
-========================================================= */
+// Admin stats
+app.get('/api/admin/stats', adminAuth, async (req, res) => {
+  try {
+    const [[users]] = await pool.query(
+      'SELECT COUNT(*) count FROM users'
+    );
 
-app.get(
-  '/api/admin/stats',
-  adminAuth,
-  async (req, res) => {
-    try {
-      const [[users]] =
-        await pool.query(
-          'SELECT COUNT(*) count FROM users'
-        );
+    const [[payments]] = await pool.query(
+      'SELECT COUNT(*) count FROM payment_requests WHERE status="pending"'
+    );
 
-      const [[payments]] =
-        await pool.query(
-          'SELECT COUNT(*) count FROM payment_requests WHERE status="pending"'
-        );
+    const [[withdrawals]] = await pool.query(
+      'SELECT COUNT(*) count FROM withdrawals WHERE status="pending"'
+    );
 
-      const [[withdrawals]] =
-        await pool.query(
-          'SELECT COUNT(*) count FROM withdrawals WHERE status="pending"'
-        );
+    const [[investments]] = await pool.query(
+      'SELECT COUNT(*) count FROM investments WHERE status="active"'
+    );
 
-      const [[investments]] =
-        await pool.query(
-          'SELECT COUNT(*) count FROM investments WHERE status="active"'
-        );
+    const [[balance]] = await pool.query(
+      'SELECT COALESCE(SUM(balance),0) total FROM users'
+    );
 
-      const [[balance]] =
-        await pool.query(
-          'SELECT COALESCE(SUM(balance),0) total FROM users'
-        );
-
-      res.json({
-        users: users.count,
-        pendingPayments:
-          payments.count,
-        pendingWithdrawals:
-          withdrawals.count,
-        activeInvestments:
-          investments.count,
-        totalUserBalance:
-          balance.total
-      });
-    } catch (e) {
-      res.status(500).json({
-        error: e.message
-      });
-    }
+    res.json({
+      users: users.count,
+      pendingPayments: payments.count,
+      pendingWithdrawals: withdrawals.count,
+      activeInvestments: investments.count,
+      totalUserBalance: balance.total
+    });
+  } catch (e) {
+    res.status(500).json({
+      error: e.message
+    });
   }
-);
+});
 
-/* =========================================================
-   ADMIN PAYMENTS
-========================================================= */
+// Admin payments
+app.get('/api/admin/payments', adminAuth, async (req, res) => {
+  try {
+    const [r] = await pool.query(
+      'SELECT pr.*,u.username,p.name plan_name FROM payment_requests pr JOIN users u ON u.id=pr.user_id JOIN plans p ON p.id=pr.plan_id ORDER BY pr.id DESC'
+    );
 
-app.get(
-  '/api/admin/payments',
-  adminAuth,
-  async (req, res) => {
-    try {
-      const [rows] =
-        await pool.query(
-          'SELECT pr.*,u.username,p.name plan_name FROM payment_requests pr JOIN users u ON u.id=pr.user_id JOIN plans p ON p.id=pr.plan_id ORDER BY pr.id DESC'
-        );
-
-      res.json(rows);
-    } catch (e) {
-      res.status(500).json({
-        error: e.message
-      });
-    }
+    res.json(r);
+  } catch (e) {
+    res.status(500).json({
+      error: e.message
+    });
   }
-);
+});
 
-/* =========================================================
-   ADMIN APPROVE PAYMENT
-========================================================= */
-
+// Admin approve payment
 app.post(
   '/api/admin/payments/:id/approve',
   adminAuth,
   async (req, res) => {
-    const conn =
-      await pool.getConnection();
+    const c = await pool.getConnection();
 
     try {
-      await conn.beginTransaction();
+      await c.beginTransaction();
 
-      const [requests] =
-        await conn.query(
-          'SELECT * FROM payment_requests WHERE id=? FOR UPDATE',
-          [req.params.id]
-        );
+      const [r] = await c.query(
+        'SELECT * FROM payment_requests WHERE id=? FOR UPDATE',
+        [req.params.id]
+      );
 
-      if (
-        !requests.length ||
-        requests[0].status !==
-          'pending'
-      ) {
-        throw new Error(
-          'Payment request is not pending.'
-        );
+      if (!r.length || r[0].status !== 'pending') {
+        throw Error('Payment request is not pending.');
       }
 
-      const [plans] =
-        await conn.query(
-          'SELECT * FROM plans WHERE id=?',
-          [requests[0].plan_id]
-        );
+      const [p] = await c.query(
+        'SELECT * FROM plans WHERE id=?',
+        [r[0].plan_id]
+      );
 
-      if (!plans.length) {
-        throw new Error(
-          'Plan not found.'
-        );
-      }
+      const start = new Date();
+      const end = new Date(
+        start.getTime() +
+        p[0].duration_days * 86400000
+      );
 
-      const start =
-        new Date();
-
-      const end =
-        new Date(
-          start.getTime() +
-            plans[0]
-              .duration_days *
-              86400000
-        );
-
-      await conn.query(
+      await c.query(
         'INSERT INTO investments(user_id,plan_id,amount,daily_rate,duration_days,status,start_at,end_at) VALUES(?,?,?,?,?,?,?,?)',
         [
-          requests[0]
-            .user_id,
-          plans[0].id,
-          plans[0].amount,
-          plans[0]
-            .daily_rate,
-          plans[0]
-            .duration_days,
+          r[0].user_id,
+          p[0].id,
+          p[0].amount,
+          p[0].daily_rate,
+          p[0].duration_days,
           'active',
           start,
           end
         ]
       );
 
-      await conn.query(
+      await c.query(
         'UPDATE users SET balance=balance+? WHERE id=?',
         [
-          requests[0].amount,
-          requests[0]
-            .user_id
+          r[0].amount,
+          r[0].user_id
         ]
       );
 
-      await conn.query(
+      await c.query(
         'UPDATE payment_requests SET status="approved",reviewed_at=NOW() WHERE id=?',
-        [requests[0].id]
+        [r[0].id]
       );
 
-      const [users] =
-        await conn.query(
-          'SELECT referred_by_user_id FROM users WHERE id=?',
-          [requests[0].user_id]
-        );
+      const [u] = await c.query(
+        'SELECT referred_by_user_id FROM users WHERE id=?',
+        [r[0].user_id]
+      );
 
-      if (
-        users[0]
-          ?.referred_by_user_id
-      ) {
+      if (u[0]?.referred_by_user_id) {
         const commission =
-          Number(
-            requests[0].amount
-          ) *
-          REFERRAL_RATE;
+          Number(r[0].amount) * REFERRAL_RATE;
 
-        await conn.query(
+        await c.query(
           'UPDATE users SET balance=balance+?,referral_earnings=referral_earnings+? WHERE id=?',
           [
             commission,
             commission,
-            users[0]
-              .referred_by_user_id
+            u[0].referred_by_user_id
           ]
         );
       }
 
-      await conn.commit();
+      await c.commit();
 
       res.json({
-        message:
-          'Payment approved.'
+        message: 'Payment approved.'
       });
     } catch (e) {
-      await conn.rollback();
+      await c.rollback();
 
       res.status(400).json({
         error: e.message
       });
     } finally {
-      conn.release();
+      c.release();
     }
   }
 );
 
-/* =========================================================
-   ADMIN REJECT PAYMENT
-========================================================= */
-
+// Admin reject payment
 app.post(
   '/api/admin/payments/:id/reject',
   adminAuth,
@@ -1032,8 +708,7 @@ app.post(
       );
 
       res.json({
-        message:
-          'Payment rejected.'
+        message: 'Payment rejected.'
       });
     } catch (e) {
       res.status(500).json({
@@ -1043,21 +718,17 @@ app.post(
   }
 );
 
-/* =========================================================
-   ADMIN WITHDRAWALS
-========================================================= */
-
+// Admin withdrawals
 app.get(
   '/api/admin/withdrawals',
   adminAuth,
   async (req, res) => {
     try {
-      const [rows] =
-        await pool.query(
-          'SELECT w.*,u.username FROM withdrawals w JOIN users u ON u.id=w.user_id ORDER BY w.id DESC'
-        );
+      const [r] = await pool.query(
+        'SELECT w.*,u.username FROM withdrawals w JOIN users u ON u.id=w.user_id ORDER BY w.id DESC'
+      );
 
-      res.json(rows);
+      res.json(r);
     } catch (e) {
       res.status(500).json({
         error: e.message
@@ -1066,97 +737,68 @@ app.get(
   }
 );
 
-/* =========================================================
-   ADMIN APPROVE WITHDRAWAL
-========================================================= */
-
+// Admin approve withdrawal
 app.post(
   '/api/admin/withdrawals/:id/approve',
   adminAuth,
   async (req, res) => {
-    const conn =
-      await pool.getConnection();
+    const c = await pool.getConnection();
 
     try {
-      await conn.beginTransaction();
+      await c.beginTransaction();
 
-      const [withdrawals] =
-        await conn.query(
-          'SELECT * FROM withdrawals WHERE id=? FOR UPDATE',
-          [req.params.id]
-        );
+      const [r] = await c.query(
+        'SELECT * FROM withdrawals WHERE id=? FOR UPDATE',
+        [req.params.id]
+      );
 
-      if (
-        !withdrawals.length ||
-        withdrawals[0].status !==
-          'pending'
-      ) {
-        throw new Error(
-          'Withdrawal is not pending.'
-        );
+      if (!r.length || r[0].status !== 'pending') {
+        throw Error('Withdrawal is not pending.');
       }
 
-      const [users] =
-        await conn.query(
-          'SELECT balance FROM users WHERE id=? FOR UPDATE',
-          [
-            withdrawals[0]
-              .user_id
-          ]
-        );
+      const [u] = await c.query(
+        'SELECT balance FROM users WHERE id=? FOR UPDATE',
+        [r[0].user_id]
+      );
 
       if (
-        !users.length ||
-        Number(
-          users[0].balance
-        ) <
-          Number(
-            withdrawals[0]
-              .amount
-          )
+        Number(u[0].balance) <
+        Number(r[0].amount)
       ) {
-        throw new Error(
-          'Insufficient balance.'
-        );
+        throw Error('Insufficient balance.');
       }
 
-      await conn.query(
+      await c.query(
         'UPDATE users SET balance=balance-? WHERE id=?',
         [
-          withdrawals[0]
-            .amount,
-          withdrawals[0]
-            .user_id
+          r[0].amount,
+          r[0].user_id
         ]
       );
 
-      await conn.query(
+      await c.query(
         'UPDATE withdrawals SET status="completed",reviewed_at=NOW() WHERE id=?',
         [req.params.id]
       );
 
-      await conn.commit();
+      await c.commit();
 
       res.json({
-        message:
-          'Withdrawal approved.'
+        message: 'Withdrawal approved.'
       });
     } catch (e) {
-      await conn.rollback();
+      await c.rollback();
 
       res.status(400).json({
         error: e.message
       });
     } finally {
-      conn.release();
+      c.release();
     }
   }
 );
 
-/* =========================================================
-   ADMIN REJECT WITHDRAWAL
-========================================================= */
-
+// Admin reject withdrawal
 app.post(
   '/api/admin/withdrawals/:id/reject',
   adminAuth,
@@ -1168,8 +810,7 @@ app.post(
       );
 
       res.json({
-        message:
-          'Withdrawal rejected.'
+        message: 'Withdrawal rejected.'
       });
     } catch (e) {
       res.status(500).json({
@@ -1179,44 +820,32 @@ app.post(
   }
 );
 
-/* =========================================================
-   ADMIN USERS
-========================================================= */
+// Admin users
+app.get('/api/admin/users', adminAuth, async (req, res) => {
+  try {
+    const [r] = await pool.query(
+      'SELECT id,username,referral_code,referred_by_user_id,balance,referral_earnings,created_at,status FROM users ORDER BY id DESC'
+    );
 
-app.get(
-  '/api/admin/users',
-  adminAuth,
-  async (req, res) => {
-    try {
-      const [rows] =
-        await pool.query(
-          'SELECT id,username,referral_code,referred_by_user_id,balance,referral_earnings,created_at,status FROM users ORDER BY id DESC'
-        );
-
-      res.json(rows);
-    } catch (e) {
-      res.status(500).json({
-        error: e.message
-      });
-    }
+    res.json(r);
+  } catch (e) {
+    res.status(500).json({
+      error: e.message
+    });
   }
-);
+});
 
-/* =========================================================
-   ADMIN INVESTMENTS
-========================================================= */
-
+// Admin investments
 app.get(
   '/api/admin/investments',
   adminAuth,
   async (req, res) => {
     try {
-      const [rows] =
-        await pool.query(
-          'SELECT i.*,u.username,p.name plan_name FROM investments i JOIN users u ON u.id=i.user_id JOIN plans p ON p.id=i.plan_id ORDER BY i.id DESC'
-        );
+      const [r] = await pool.query(
+        'SELECT i.*,u.username,p.name plan_name FROM investments i JOIN users u ON u.id=i.user_id JOIN plans p ON p.id=i.plan_id ORDER BY i.id DESC'
+      );
 
-      res.json(rows);
+      res.json(r);
     } catch (e) {
       res.status(500).json({
         error: e.message
@@ -1225,57 +854,32 @@ app.get(
   }
 );
 
-/* =========================================================
-   ADMIN PLANS
-========================================================= */
+// Admin plans
+app.get('/api/admin/plans', adminAuth, async (req, res) => {
+  try {
+    const [r] = await pool.query(
+      'SELECT id,name,amount,daily_rate,duration_days,active FROM plans ORDER BY id'
+    );
 
-app.get(
-  '/api/admin/plans',
-  adminAuth,
-  async (req, res) => {
-    try {
-      const [rows] =
-        await pool.query(
-          'SELECT id,name,amount,daily_rate,duration_days,active FROM plans ORDER BY id'
-        );
-
-      res.json(rows);
-    } catch (e) {
-      res.status(500).json({
-        error: e.message
-      });
-    }
+    res.json(r);
+  } catch (e) {
+    res.status(500).json({
+      error: e.message
+    });
   }
-);
+});
 
-/* =========================================================
-   ADMIN UPDATE PLAN
-========================================================= */
-
+// Admin update plan
 app.put(
   '/api/admin/plans/:id',
   adminAuth,
   async (req, res) => {
     try {
-      const name = String(
-        req.body.name || ''
-      ).trim();
-
-      const amount = Number(
-        req.body.amount
-      );
-
-      const dailyRate = Number(
-        req.body.dailyRate
-      );
-
-      const durationDays =
-        Number(
-          req.body.durationDays
-        );
-
-      const active =
-        req.body.active ? 1 : 0;
+      const name = String(req.body.name || '').trim();
+      const amount = Number(req.body.amount);
+      const dailyRate = Number(req.body.dailyRate);
+      const durationDays = Number(req.body.durationDays);
+      const active = req.body.active ? 1 : 0;
 
       if (
         !name ||
@@ -1284,8 +888,7 @@ app.put(
         !(durationDays > 0)
       ) {
         return res.status(400).json({
-          error:
-            'Valid plan fields are required.'
+          error: 'Valid plan fields are required.'
         });
       }
 
@@ -1302,8 +905,7 @@ app.put(
       );
 
       res.json({
-        message:
-          'Plan updated.'
+        message: 'Plan updated.'
       });
     } catch (e) {
       res.status(500).json({
@@ -1313,55 +915,23 @@ app.put(
   }
 );
 
-/* =========================================================
-   ERROR HANDLER
-========================================================= */
+// Error handler
+app.use((err, req, res, next) => {
+  console.error(err);
 
-app.use(
-  (err, req, res, next) => {
-    console.error(err);
+  res.status(500).json({
+    error: 'Server error.'
+  });
+});
 
-    res.status(500).json({
-      error:
-        'Server error.'
-    });
-  }
-);
-
-/* =========================================================
-   START SERVER
-========================================================= */
-
+// Start server
 migrate()
   .then(() => {
-    app.listen(
-      PORT,
-      () => {
-        console.log(
-          `Smart Invest API running on http://localhost:${PORT}`
-        );
-
-        console.log(
-          `Frontend directory: ${frontendDir}`
-        );
-
-        console.log(
-          `Frontend file: ${path.join(
-            frontendDir,
-            'index.html'
-          )}`
-        );
-
-        console.log(
-          `Frontend exists: ${fs.existsSync(
-            path.join(
-              frontendDir,
-              'index.html'
-            )
-          )}`
-        );
-      }
-    );
+    app.listen(PORT, () => {
+      console.log(
+        `Smart Invest API running on http://localhost:${PORT}`
+      );
+    });
   })
   .catch(e => {
     console.error(e);
